@@ -8,20 +8,19 @@ on:
 
 env:
   BAZEL_VERSION: "4.1.0"
+  LLVM_VERSION: 13
 
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04]
+        os: [ubuntu-latest]
         compiler: [gcc, clang]
 
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v2
-      with:
-        submodules: recursive
 
     - name: Print compiler info
       run: ${{ matrix.compiler }} --version
@@ -63,7 +62,7 @@ jobs:
         bazel test --config=${{ matrix.compiler }} //...
 
   format:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
 
@@ -80,21 +79,18 @@ jobs:
         git --no-pager diff
 
   lint:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-20.04]
-        compiler: [clang]
-
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-        with:
-          submodules: recursive
 
-      - name: Install clang-tidy
+      - name: Install clang-tidy ${{ env.LLVM_VERSION }}
         run: |
-          sudo apt-get install -y clang-tidy
+          sudo .github/workflows/llvm.sh ${LLVM_VERSION}
+          sudo apt-get install -y clang-tidy-${LLVM_VERSION}
+
+      - name: Link clang-tidy to clang-tidy-${{ env.LLVM_VERSION }}
+        run: |
+          sudo ln -s $(which clang-tidy-13) /usr/bin/clang-tidy
           clang-tidy --version
 
       - id: cache-bazel-install
