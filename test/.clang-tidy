@@ -1,0 +1,11 @@
+InheritParentConfig: true
+Checks: >
+    -cppcoreguidelines-avoid-non-const-global-variables,
+    -cert-err58-cpp,
+    -cppcoreguidelines-avoid-goto,
+    -cppcoreguidelines-owning-memory,
+    -fuchsia-statically-constructed-objects,
+    -google-readability-avoid-underscore-in-googletest-name,
+    -modernize-use-trailing-return-type,
+    -readability-magic-numbers,
+
