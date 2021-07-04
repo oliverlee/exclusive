@@ -8,5 +8,4 @@ namespace exclusive {
 template <class T>
 struct shared_resource {};
 
-}
-
+}  // namespace exclusive
