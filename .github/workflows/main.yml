@@ -125,5 +125,8 @@ jobs:
           cat .bazelrc.ci >> .bazelrc
 
       - name: Lint
+        env:
+          CC: clang
+          CXX: clang++
         run: |
           bazel build --config=clang-tidy //...

@@ -2,6 +2,8 @@ UseColor: true
 Checks: >
     *,
 
+    -altera-struct-pack-align,
+
     -fuchsia-default-arguments-calls,
     -fuchsia-default-arguments-declarations,
     -fuchsia-multiple-inheritance,
@@ -84,7 +86,7 @@ Checks: >
     -llvm-qualified-auto,
 
 WarningsAsErrors: '*'
-HeaderFilterRegex: '^include'
+HeaderFilterRegex: '^.*/exclusive'
 
 CheckOptions:
     - key: misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic
