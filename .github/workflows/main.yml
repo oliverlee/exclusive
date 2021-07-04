@@ -130,4 +130,4 @@ jobs:
 
       - name: Lint
         run: |
-          bazel test --config=${{ matrix.compiler }} $(bazel query 'attr(tags, "lint", tests(//...))')
+          bazel build --config=clang-tidy //...

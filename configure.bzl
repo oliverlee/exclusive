@@ -50,38 +50,3 @@ Generate the following .bzl files:
 Args:
     defs_template: The template file with variable `%{compiler_name}`.
 """
-
-
-def _configure_clang_tidy_impl(repository_ctx):
-    tidy_bin_name = "clang-tidy"
-
-    system_tidy_path = repository_ctx.os.environ.get("CLANG_TIDY_PATH")
-    if not system_tidy_path:
-        result = repository_ctx.execute(["which", tidy_bin_name])
-        system_tidy_path = result.stdout.splitlines()[0]
-
-    repository_ctx.symlink(system_tidy_path, tidy_bin_name)
-
-    repository_ctx.file("BUILD", """
-sh_binary(
-    name = "clang-tidy-bin",
-    srcs = ["%s"],
-    visibility = ["//visibility:public"],
-)
-""" % tidy_bin_name)
-
-
-configure_clang_tidy = repository_rule(
-    implementation = _configure_clang_tidy_impl,
-    local = True,
-    configure = True,
-    environ = ["CLANG_TIDY_PATH"],
-)
-"""Generates a repository for using an system install of `clang-tidy`.
-
-Attempts to provide access to a system installation of `clang-tidy`. If the
-`CLANG_TIDY_PATH` environment variable is defined, it will be used instead of
-hard-coded system paths.
-
-If specified, `CLANG_TIDY_PATH` must be an absolute path.
-"""
