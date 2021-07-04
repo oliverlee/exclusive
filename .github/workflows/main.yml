@@ -16,14 +16,19 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        compiler: [gcc, clang]
+        config: [gcc, clang, asan, tsan, ubsan]
 
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v2
 
     - name: Print compiler info
-      run: ${{ matrix.compiler }} --version
+      run: |
+        if [[ "${{ matrix.config }}" == "clang"  ]]; then
+          clang --version
+        else
+          gcc --version
+        fi
 
     - id: cache-bazel-install
       uses: actions/cache@v2
@@ -38,9 +43,9 @@ jobs:
       with:
         path: |
           ~/.cache/bazel
-        key: ${{ matrix.os }}-bazel-${{ env.BAZEL_VERSION }}-${{ matrix.compiler }}-${{ github.sha }}
+        key: ${{ matrix.os }}-bazel-${{ env.BAZEL_VERSION }}-${{ matrix.config }}-${{ github.sha }}
         restore-keys: |
-          ${{ matrix.os }}-bazel-${{ env.BAZEL_VERSION }}-${{ matrix.compiler }}-
+          ${{ matrix.os }}-bazel-${{ env.BAZEL_VERSION }}-${{ matrix.config }}-
 
     - name: Setup Bazel
       run: |
@@ -58,8 +63,8 @@ jobs:
 
     - name: Build and Test
       run: |
-        bazel build --config=${{ matrix.compiler }} //...
-        bazel test --config=${{ matrix.compiler }} //...
+        bazel build --config=${{ matrix.config }} //...
+        bazel test --config=${{ matrix.config }} //...
 
   format:
     runs-on: ubuntu-latest
