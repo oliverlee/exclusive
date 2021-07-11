@@ -4,14 +4,13 @@
 #include <cstddef>
 #include <thread>
 
-// Add a test that should obviously trigger a failure from tsan
 TEST(SharedResource, AccessFromMultipleThreads)
 {
     auto x = exclusive::shared_resource<int>{};
 
-    const auto inc_n = [&resource = x.resource](std::size_t n) {
+    const auto inc_n = [&x](std::size_t n) {
         for (std::size_t i = 0U; i != n; ++i) {
-            ++resource;
+            ++(*x.access());
         }
     };
 
@@ -23,5 +22,5 @@ TEST(SharedResource, AccessFromMultipleThreads)
     t2.join();
     t3.join();
 
-    EXPECT_EQ(300U, x.resource);
+    EXPECT_EQ(300U, *x.access());
 }
