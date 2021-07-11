@@ -71,14 +71,15 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
-    - name: Install clang-format
+    - name: Install clang-format ${{ env.LLVM_VERSION }}
       run: |
-        sudo apt-get install -y clang-format
-        clang-format --version
+        sudo .github/workflows/llvm.sh ${LLVM_VERSION}
+        sudo apt-get install -y clang-format-${LLVM_VERSION}
+        clang-format-${LLVM_VERSION} --version
 
     - name: Run clang-format
       run: |
-        ./run_format.sh clang-format
+        ./run_format.sh clang-format-${LLVM_VERSION}
         git --no-pager diff
         git update-index --really-refresh
         git --no-pager diff
