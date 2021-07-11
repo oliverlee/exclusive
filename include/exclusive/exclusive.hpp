@@ -40,6 +40,7 @@ class array_mutex {
 
     // Slot that each thread spins on.
     // FIXME Use of `thread_local` prevents more than one instance of an array_mutex<N>.
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
     thread_local static std::size_t slot;
 
   public:
@@ -84,6 +85,7 @@ class array_mutex {
 };
 
 template <std::size_t N>
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 thread_local std::size_t array_mutex<N>::slot;
 
 template <class T, std::size_t N>

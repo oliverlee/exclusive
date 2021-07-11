@@ -8,6 +8,12 @@ Checks: >
     # don't manually unroll loops,
     -altera-unroll-loops,
 
+    # don't manually warn about backward branches,
+    -altera-id-dependent-backward-branch,
+
+    # don't force wide contracts,
+    -cppcoreguidelines-pro-bounds-constant-array-index,
+
     # disable things I want to do,
     -fuchsia-default-arguments-calls,
     -fuchsia-default-arguments-declarations,
@@ -17,6 +23,9 @@ Checks: >
 
     # allow references to be returned,
     -google-runtime-references,
+
+    # there's no one else,
+    -google-readability-todo,
 
     # don't warn for tag dispatch,
     -readability-named-parameter,
