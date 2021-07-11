@@ -6,6 +6,8 @@ namespace exclusive {
 /// @brief A shared resource with synchronized access
 /// @tparam T Shared resource type
 template <class T>
-struct shared_resource {};
+struct shared_resource {
+    T resource{};
+};
 
 }  // namespace exclusive
