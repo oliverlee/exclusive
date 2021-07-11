@@ -8,4 +8,5 @@ Checks: >
     -google-readability-avoid-underscore-in-googletest-name,
     -modernize-use-trailing-return-type,
     -readability-magic-numbers,
+    -hicpp-avoid-goto,
 

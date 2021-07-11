@@ -30,6 +30,9 @@ Checks: >
     # don't warn for tag dispatch,
     -readability-named-parameter,
 
+    # don't use auto* for iterators,
+    -readability-qualified-auto,
+
     # disable project specific checks,
     -android-*,
     -darwin-*,
