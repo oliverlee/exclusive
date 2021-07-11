@@ -2,16 +2,23 @@ UseColor: true
 Checks: >
     *,
 
+    # disable struct packing warnings,
     -altera-struct-pack-align,
 
+    # don't manually unroll loops,
+    -altera-unroll-loops,
+
+    # disable things I want to do,
     -fuchsia-default-arguments-calls,
     -fuchsia-default-arguments-declarations,
     -fuchsia-multiple-inheritance,
     -fuchsia-overloaded-operator,
     -fuchsia-trailing-return,
 
+    # allow references to be returned,
     -google-runtime-references,
 
+    # don't warn for tag dispatch,
     -readability-named-parameter,
 
     # disable project specific checks,
