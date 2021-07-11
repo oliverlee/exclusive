@@ -88,12 +88,11 @@ template <std::size_t N>
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 thread_local std::size_t array_mutex<N>::slot;
 
-template <class T, std::size_t N>
+template <class T, class Mutex>
 class shared_resource;
 
 /// @brief Scoped access token for a shared resource
 /// @tparam T Resource type
-/// @tparam N Resource access slots
 /// @tparam Mutex Mutex type (except `try_lock()` isn't necessary)
 ///
 /// Wrapper type providing RAII mechanism for access to a shared resource.
@@ -101,12 +100,12 @@ class shared_resource;
 /// mutex.
 ///
 /// This type is only intended to be created by a `shared_resource<T>`.
-template <class T, std::size_t N, class Mutex>
+template <class T, class Mutex>
 class scoped_access {
     T& resource_;
     std::scoped_lock<Mutex> lock_;
 
-    friend class shared_resource<T, N>;
+    friend class shared_resource<T, Mutex>;
     scoped_access(T& r, Mutex& m) noexcept : resource_{r}, lock_{m} {}
 
   public:
@@ -125,16 +124,19 @@ class scoped_access {
 
 /// @brief A shared resource with synchronized access
 /// @tparam T Resource type
-/// @tparam N Resource access slots
-template <class T, std::size_t N>
+/// @tparam Mutex Mutex type (except `try_lock()` isn't necessary)
+template <class T, class Mutex = std::mutex>
 class shared_resource {
     static_assert(std::is_object_v<T>);
     static_assert(std::is_default_constructible_v<T>);
 
     T resource_{};
-    array_mutex<N> mutex_{};
+    Mutex mutex_{};
 
   public:
+    using resource_type = T;
+    using mutex_type = Mutex;
+
     /// @brief Constructs a shared resource using the type's default constructor
     shared_resource() = default;
     ~shared_resource() = default;
@@ -146,10 +148,7 @@ class shared_resource {
 
     /// @brief Acquire access to the shared resource
     /// @return A scoped_access token
-    [[nodiscard]] auto access() -> scoped_access<T, N, array_mutex<N>>
-    {
-        return {resource_, mutex_};
-    }
+    [[nodiscard]] auto access() -> scoped_access<T, Mutex> { return {resource_, mutex_}; }
 };
 
 }  // namespace exclusive

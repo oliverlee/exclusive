@@ -6,7 +6,7 @@
 
 TEST(SharedResource, AccessFromMultipleThreads)
 {
-    auto x = exclusive::shared_resource<int, 4>{};
+    auto x = exclusive::shared_resource<int, exclusive::array_mutex<4>>{};
 
     const auto inc_n = [&x](std::size_t n) {
         for (std::size_t i = 0U; i != n; ++i) {
