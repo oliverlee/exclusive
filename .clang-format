@@ -2,6 +2,7 @@
 BasedOnStyle: LLVM
 AllowShortFunctionsOnASingleLine: Inline
 AllowShortIfStatementsOnASingleLine: 'false'
+AllowShortBlocksOnASingleLine: Empty
 AllowShortLambdasOnASingleLine: All
 AllowShortLoopsOnASingleLine: 'true'
 AlwaysBreakAfterReturnType: None

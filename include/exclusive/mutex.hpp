@@ -79,8 +79,7 @@ class array_mutex {
     auto lock()
     {
         slot = tail_.fetch_add(1, std::memory_order_relaxed) % N;
-        while (!flag_[slot].value.load(std::memory_order_acquire)) {
-        }
+        while (!flag_[slot].value.load(std::memory_order_acquire)) {}
 
         if (flag_[slot].in_use.test_and_set()) {
             throw error_on_slots_exceeded();
@@ -130,8 +129,7 @@ class clh_mutex {
         }
 
         while (!free_list_.compare_exchange_weak(
-            top, top->next, std::memory_order_release, std::memory_order_acquire)) {
-        }
+            top, top->next, std::memory_order_release, std::memory_order_acquire)) {}
 
         return top;
     }
@@ -181,11 +179,9 @@ class clh_mutex {
 
         auto* pred = tail_.load(std::memory_order_acquire);
         while (!tail_.compare_exchange_weak(
-            pred, my_node, std::memory_order_release, std::memory_order_acquire)) {
-        }
+            pred, my_node, std::memory_order_release, std::memory_order_acquire)) {}
 
-        while (pred->locked.load(std::memory_order_acquire)) {
-        }
+        while (pred->locked.load(std::memory_order_acquire)) {}
 
         push_free(pred);
 

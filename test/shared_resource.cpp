@@ -22,9 +22,7 @@ TEST(SharedResource, AccessFromMultipleThreads)
     auto x = exclusive::shared_resource<int, exclusive::array_mutex<4>>{};
 
     const auto inc_n = [&x](std::size_t n) {
-        for (std::size_t i = 0U; i != n; ++i) {
-            ++(*x.access());
-        }
+        for (std::size_t i = 0U; i != n; ++i) { ++(*x.access()); }
     };
 
     constexpr auto n = 1'000U;
@@ -83,9 +81,7 @@ TEST(SharedResourceCLhLock, AccessFromMultipleThreads)
     auto x = exclusive::shared_resource<int, exclusive::clh_mutex<5>>{};
 
     const auto inc_n = [&x](std::size_t n) {
-        for (std::size_t i = 0U; i != n; ++i) {
-            ++(*x.access());
-        }
+        for (std::size_t i = 0U; i != n; ++i) { ++(*x.access()); }
     };
 
     constexpr auto n = 1'000U;
