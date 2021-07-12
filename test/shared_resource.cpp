@@ -76,15 +76,15 @@ TEST(SharedResource, ThrowsWhenSlotsExceeded)
     p3.set_value();
 }
 
-TEST(SharedResourceCLhLock, AccessFromMultipleThreads)
+TEST(SharedResourceClhLock, AccessFromMultipleThreads)
 {
-    auto x = exclusive::shared_resource<int, exclusive::clh_mutex<5>>{};
+    auto x = exclusive::shared_resource<int, exclusive::clh_mutex<6>>{};
 
     const auto inc_n = [&x](std::size_t n) {
         for (std::size_t i = 0U; i != n; ++i) { ++(*x.access()); }
     };
 
-    constexpr auto n = 1'000U;
+    constexpr auto n = 1'000'000U;
 
     auto t1 = std::thread{inc_n, n};
     auto t2 = std::thread{inc_n, n};
@@ -101,8 +101,9 @@ TEST(SharedResourceCLhLock, AccessFromMultipleThreads)
 
 TEST(SharedResourceClhLock, ThrowsWhenSlotsExceeded)
 {
-    // While 3 slots may fail, it is possible that the initial tail may be
-    // returned to the free list before the 3rd slot is accessed.
+    // While 3 slots may fail, it is possible that the initial tail slot may be
+    // returned to the free list before the 3rd slot is accessed, resulting in
+    // success in some cases.
     auto x = exclusive::shared_resource<int, exclusive::clh_mutex<2>>{};
 
     const auto access_and_wait = [&x](auto stop) {

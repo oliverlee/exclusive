@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <cstddef>
 #include <mutex>
 #include <new>
@@ -102,66 +103,106 @@ template <std::size_t N>
 thread_local std::size_t array_mutex<N>::slot;
 
 
+class queue {
+  public:
+    struct alignas(hardware_destructive_interference_size) node {
+        std::atomic_bool locked{};
+        std::atomic<node*> next{};
+    };
+
+    /// Construct a queue, initializing with nodes from a separate pool
+    queue(node* first, node* last);
+
+    auto push(node* new_tail) -> void;
+    auto try_pop() -> node*;
+
+  private:
+    alignas(hardware_destructive_interference_size) std::atomic<node*> head_{};
+    alignas(hardware_destructive_interference_size) std::atomic<node*> tail_{};
+};
+
+queue::queue(queue::node* first, queue::node* last)
+{
+    assert(first != last);
+    assert(first != nullptr);
+
+    head_.store(first, std::memory_order_relaxed);
+
+    auto* prev = first;
+    while (++first != last) {
+        prev->next = first;
+        prev = first;
+    }
+
+    prev->next = nullptr;
+    tail_.store(prev, std::memory_order_relaxed);
+}
+
+auto queue::push(queue::node* new_tail) -> void
+{
+    new_tail->next.store(nullptr, std::memory_order_relaxed);
+
+    // No other threads can push without holding the lock.
+    // How strong does the memory order need to be?
+    auto* t = tail_.load(std::memory_order_relaxed);
+
+    auto ok = tail_.compare_exchange_weak(
+        t, new_tail, std::memory_order_relaxed, std::memory_order_relaxed);
+    assert(ok);
+
+    // (Q1) update next node to new tail
+    // synchronizes with (Q3)
+    t->next.store(new_tail, std::memory_order_release);
+}
+
+auto queue::try_pop() -> node*
+{
+    // (Q2) grab the head node
+    // synchronizes with (Q4)
+    auto* h = head_.load(std::memory_order_acquire);
+
+    for (;;) {
+        // (Q3) if next is empty, give up
+        // synchronizes with (Q1)
+        auto* next = h->next.load(std::memory_order_acquire);
+        if (next == nullptr) {
+            return nullptr;
+        }
+
+        // (Q4) update head
+        // synchronizes with (Q2)
+        if (head_.compare_exchange_weak(
+                h, next, std::memory_order_release, std::memory_order_acquire)) {
+            break;
+        }
+    }
+
+    return h;
+}
+
+
 template <std::size_t N>
 class clh_mutex {
     static_assert(N > 1, "");
 
-    struct alignas(hardware_destructive_interference_size) cache_node {
-        std::atomic_bool locked{};
-        std::atomic<cache_node*> next{};
-    };
+    std::array<queue::node, N> node_storage_{};
 
-    std::array<cache_node, N> node_pool_{};
+    queue available_;
 
-    std::atomic<cache_node*> tail_{};
-    std::atomic<cache_node*> free_list_{};
+    std::atomic<queue::node*> tail_{};
 
     // Slot that each thread spins on.
-    // FIXME Use of `thread_local` prevents more than one instance of an array_mutex<N>.
-    thread_local static cache_node* slot;
-
-    auto pop_free() -> cache_node*
-    {
-        auto* top = free_list_.load(std::memory_order_acquire);
-
-        if (top == nullptr) {
-            throw error_on_slots_exceeded();
-        }
-
-        while (!free_list_.compare_exchange_weak(
-            top, top->next, std::memory_order_release, std::memory_order_acquire)) {}
-
-        return top;
-    }
-
-    auto push_free(cache_node* new_top)
-    {
-        auto* current_top = free_list_.load(std::memory_order_relaxed);
-
-        for (;;) {
-            new_top->next.store(current_top, std::memory_order_relaxed);
-            if (free_list_.compare_exchange_strong(
-                    current_top, new_top, std::memory_order_release, std::memory_order_relaxed)) {
-                break;
-            }
-        }
-    }
+    // FIXME Use of `thread_local` prevents more than one instance of an clh_mutex<N>.
+    thread_local static queue::node* slot;
 
   public:
-    clh_mutex()
+    clh_mutex() : available_(node_storage_.begin(), node_storage_.end())
     {
-        std::for_each(node_pool_.begin() + 1,
-                      node_pool_.end(),
-                      [next = static_cast<cache_node*>(nullptr)](auto& n) mutable {
-                          n.locked.store(false, std::memory_order_relaxed);
-                          n.next.store(std::exchange(next, &n), std::memory_order_relaxed);
-                      });
+        auto* n = available_.try_pop();
+        assert(n != nullptr);
 
-        node_pool_[0].locked.store(false, std::memory_order_relaxed);
-        node_pool_[0].next.store(nullptr, std::memory_order_relaxed);
-        tail_.store(&node_pool_[0], std::memory_order_relaxed);
-
-        free_list_.store(&node_pool_.back(), std::memory_order_relaxed);
+        n->locked.store(false, std::memory_order_relaxed);
+        tail_.store(n, std::memory_order_relaxed);
     }
 
     ~clh_mutex() = default;
@@ -173,29 +214,48 @@ class clh_mutex {
 
     auto lock()
     {
-        auto* my_node = pop_free();
+        // get a node
+        auto* n = available_.try_pop();
+        if (n == nullptr) {
+            throw error_on_slots_exceeded();
+        }
 
-        my_node->locked.store(true, std::memory_order_relaxed);
+        // signal intent to acquire lock
+        n->locked.store(true, std::memory_order_relaxed);
 
+        // (C1) grab predecessor
+        // synchronizes with (C2)
         auto* pred = tail_.load(std::memory_order_acquire);
-        while (!tail_.compare_exchange_weak(
-            pred, my_node, std::memory_order_release, std::memory_order_acquire)) {}
 
+        // (C2) swap predecessor with self, becoming the predecessor for the
+        // next thread
+        // synchronizes with (C1)
+        while (!tail_.compare_exchange_weak(
+            pred, n, std::memory_order_release, std::memory_order_acquire)) {}
+
+        // (C3) spin on predecessor until the lock is released
+        // synchronizes with (C4)
         while (pred->locked.load(std::memory_order_acquire)) {}
 
-        push_free(pred);
+        // recycle the predecessor node
+        available_.push(pred);
 
-        slot = my_node;
+        slot = n;
     }
 
-    auto unlock() { slot->locked.store(false, std::memory_order_release); }
+    auto unlock()
+    {
+        // (C4) release lock
+        // synchronizes with (C3)
+        slot->locked.store(false, std::memory_order_release);
+    }
 
     auto try_lock();
 };
 
 template <std::size_t N>
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-thread_local typename clh_mutex<N>::cache_node* clh_mutex<N>::slot;
+thread_local typename queue::node* clh_mutex<N>::slot;
 
 
 }  // namespace exclusive
