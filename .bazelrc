@@ -25,6 +25,7 @@ build:asan --action_env=ASAN_OPTIONS=detect_leaks=1:color=always
 # Thread sanitizer
 # bazel build --config tsan
 build:tsan --strip=never
+build:tsan --copt -g
 build:tsan --copt -fsanitize=thread
 build:tsan --copt -DTHREAD_SANITIZER
 build:tsan --copt -DDYNAMIC_ANNOTATIONS_ENABLED=1
