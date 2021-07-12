@@ -84,7 +84,7 @@ TEST(SharedResourceClhLock, AccessFromMultipleThreads)
         for (std::size_t i = 0U; i != n; ++i) { ++(*x.access()); }
     };
 
-    constexpr auto n = 1'000'000U;
+    constexpr auto n = 1'000U;
 
     auto t1 = std::thread{inc_n, n};
     auto t2 = std::thread{inc_n, n};
@@ -101,10 +101,25 @@ TEST(SharedResourceClhLock, AccessFromMultipleThreads)
 
 TEST(SharedResourceClhLock, ThrowsWhenSlotsExceeded)
 {
-    // While 3 slots may fail, it is possible that the initial tail slot may be
-    // returned to the free list before the 3rd slot is accessed, resulting in
-    // success in some cases.
-    auto x = exclusive::shared_resource<int, exclusive::clh_mutex<2>>{};
+    // With 3 slots, the clh_mutex starts with:
+    // - tail : [x]
+    // - available : [ ], [ ]
+    //
+    // Threads can only take an available slot if it's not the last one and the
+    // following situations are possible:
+    // - tail : [x]
+    // - available : [ ]
+    // - taken: [1]
+    //
+    // - tail : [1] [x]
+    // - available : [ ]
+    // - taken :
+    //
+    // - tail : [1]
+    // - available : [ ]
+    // - taken : [2]
+    //
+    auto x = exclusive::shared_resource<int, exclusive::clh_mutex<3>>{};
 
     const auto access_and_wait = [&x](auto stop) {
         auto access_scope = x.access();
@@ -128,9 +143,23 @@ TEST(SharedResourceClhLock, ThrowsWhenSlotsExceeded)
 
     ASSERT_THROW(no_slot->get(), std::system_error);
 
-    for (const auto& fut : tasks) {
-        ASSERT_TRUE((&fut == &*no_slot) || status_is<std::future_status::timeout>(fut));
+    auto num_waiting = 0;
+
+    for (auto& fut : tasks) {
+        if (&fut == &*no_slot) {
+            continue;
+        }
+
+        if (status_is<std::future_status::timeout>(fut)) {
+            ++num_waiting;
+        } else {
+            ASSERT_TRUE(status_is<std::future_status::ready>(fut));
+            ASSERT_THROW(fut.get(), std::system_error);
+        }
     }
+
+    ASSERT_LE(1, num_waiting);
+    ASSERT_GE(2, num_waiting);
 
     p1.set_value();
     p2.set_value();

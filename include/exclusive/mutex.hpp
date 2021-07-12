@@ -150,7 +150,7 @@ auto queue::push(queue::node* new_tail) -> void
         t, new_tail, std::memory_order_relaxed, std::memory_order_relaxed);
     assert(ok);
 
-    // (Q1) update next node to new tail
+    // (Q1) update old tail to point to the new tail
     // synchronizes with (Q3)
     t->next.store(new_tail, std::memory_order_release);
 }
