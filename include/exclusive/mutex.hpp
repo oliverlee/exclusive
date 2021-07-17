@@ -46,10 +46,8 @@ class array_mutex {
     // must be performed before indexing `flag_`.
     std::atomic_size_t tail_{};
 
-    // Slot that each thread spins on.
-    // FIXME Use of `thread_local` prevents more than one instance of an array_mutex<N>.
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-    thread_local static std::size_t slot;
+    // Slot granted exclusive access
+    std::size_t active_{};
 
   public:
     array_mutex()
@@ -79,17 +77,21 @@ class array_mutex {
     // TODO handle timeout?
     auto lock()
     {
-        slot = tail_.fetch_add(1, std::memory_order_relaxed) % N;
+        auto slot = tail_.fetch_add(1, std::memory_order_relaxed) % N;
         while (!flag_[slot].value.load(std::memory_order_acquire)) {}
 
         if (flag_[slot].in_use.test_and_set()) {
             throw error_on_slots_exceeded();
         }
+
+        active_ = slot;
     }
 
     /// Unlocks the mutex
     auto unlock()
     {
+        auto slot = active_;
+
         flag_[slot].value.store(false, std::memory_order_relaxed);
         flag_[(1U + slot) % N].in_use.clear();
         flag_[(1U + slot) % N].value.store(true, std::memory_order_release);
@@ -97,10 +99,6 @@ class array_mutex {
 
     auto try_lock();
 };
-
-template <std::size_t N>
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-thread_local std::size_t array_mutex<N>::slot;
 
 /// Tag types for selecting behavior on lock failure
 namespace failure {
