@@ -183,17 +183,17 @@ auto queue::try_pop() -> node*
 
 template <std::size_t N>
 class clh_mutex {
-    static_assert(N > 1, "");
+    static_assert(N > 1, "Number of nodes must be greater than 1.");
 
     std::array<queue::node, N> node_storage_{};
 
     queue available_;
 
+    alignas(hardware_destructive_interference_size)
     std::atomic<queue::node*> tail_{};
 
-    // Slot that each thread spins on.
-    // FIXME Use of `thread_local` prevents more than one instance of an clh_mutex<N>.
-    thread_local static queue::node* slot;
+    // The node that has been granted exclusive access
+  std::atomic<queue::node*> active_;
 
   public:
     clh_mutex() : available_(node_storage_.begin(), node_storage_.end())
@@ -240,22 +240,19 @@ class clh_mutex {
         // recycle the predecessor node
         available_.push(pred);
 
-        slot = n;
+        active_.store(n, std::memory_order_relaxed);
     }
 
     auto unlock()
     {
+      auto* n = active_.load(std::memory_order_relaxed);
+
         // (C4) release lock
         // synchronizes with (C3)
-        slot->locked.store(false, std::memory_order_release);
+          n->locked.store(false, std::memory_order_release);
     }
 
     auto try_lock();
 };
-
-template <std::size_t N>
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-thread_local typename queue::node* clh_mutex<N>::slot;
-
 
 }  // namespace exclusive
