@@ -78,7 +78,7 @@ TEST(SharedResource, ThrowsWhenSlotsExceeded)
 
 TEST(SharedResourceClhLock, AccessFromMultipleThreads)
 {
-    auto x = exclusive::shared_resource<int, exclusive::clh_mutex<6>>{};
+    auto x = exclusive::shared_resource<int, exclusive::clh_mutex<4>>{};
 
     const auto inc_n = [&x](std::size_t n) {
         for (std::size_t i = 0U; i != n; ++i) { ++(*x.access()); }
@@ -99,9 +99,10 @@ TEST(SharedResourceClhLock, AccessFromMultipleThreads)
     EXPECT_EQ(4 * n, *x.access());
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST(SharedResourceClhLock, ThrowsWhenSlotsExceeded)
 {
-    // With 3 slots, the clh_mutex starts with:
+    // With 1 (+ 2) slots, the clh_mutex starts with:
     // - tail : [x]
     // - available : [ ], [ ]
     //
@@ -111,7 +112,7 @@ TEST(SharedResourceClhLock, ThrowsWhenSlotsExceeded)
     // - available : [ ]
     // - taken: [1]
     //
-    // - tail : [1] [x]
+    // - tail : [x] [1]
     // - available : [ ]
     // - taken :
     //
@@ -119,11 +120,11 @@ TEST(SharedResourceClhLock, ThrowsWhenSlotsExceeded)
     // - available : [ ]
     // - taken : [2]
     //
-    auto x = exclusive::shared_resource<int, exclusive::clh_mutex<3>>{};
+    auto x = exclusive::shared_resource<int, exclusive::clh_mutex<1, exclusive::failure::die>>{};
 
-    const auto access_and_wait = [&x](auto stop) {
+    const auto access_and_wait = [&x](auto stop_after) {
         auto access_scope = x.access();
-        stop.get();
+        stop_after.get();
     };
 
     auto p1 = std::promise<void>{};

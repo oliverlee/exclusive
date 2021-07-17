@@ -13,7 +13,7 @@
 /// @brief Provides exclusive access to shared resources
 namespace exclusive {
 
-auto error_on_slots_exceeded()
+inline auto error_on_slots_exceeded()
 {
     return std::system_error{std::make_error_code(std::errc::device_or_resource_busy)};
 }
@@ -102,98 +102,113 @@ template <std::size_t N>
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 thread_local std::size_t array_mutex<N>::slot;
 
+/// Tag types for selecting behavior on lock failure
+namespace failure {
+struct retry {};
+struct die {};
+}  // namespace failure
 
-class queue {
-  public:
-    struct alignas(hardware_destructive_interference_size) node {
-        std::atomic_bool locked{};
-        std::atomic<node*> next{};
+/// Mutex implementing a CLH Queue Lock
+///
+/// @tparam N Number of nodes in the fixed sized pool. Should match the number
+///     of concurrent threads accessing the lock. Additional nodes may be used
+///     for bookkeeping.
+/// @tparam Failure Policy when failing to obtain a node on calling lock. Must
+///     be `failure::retry` or `failure::die`.
+///
+/// Implements a mutex similar to CLH queue lock. This class manages a
+/// fixed-size pool of nodes instead of threads allocating a node when locking.
+/// A node will be recycled to the available pool of nodes after a thread
+/// unlocks.
+///
+template <std::size_t N, class Failure = failure::retry>
+class clh_mutex {
+    static_assert(N > 0, "Number of nodes must be greater than 0.");
+
+    static_assert(std::disjunction_v<std::is_same<failure::retry, Failure>,
+                                     std::is_same<failure::die, Failure>>);
+
+    /// A node queue for the clh_mutex
+    class queue {
+      public:
+        struct alignas(hardware_destructive_interference_size) node {
+            std::atomic_bool locked{};
+            std::atomic<node*> next{};
+        };
+
+        /// Construct a queue, initializing with nodes from a separate pool
+        queue(node* first, node* last)
+        {
+            assert(first != last);
+            assert(first != nullptr);
+
+            head_.store(first, std::memory_order_relaxed);
+
+            auto* prev = first;
+            while (++first != last) {
+                prev->next = first;
+                prev = first;
+            }
+
+            prev->next = nullptr;
+            tail_.store(prev, std::memory_order_relaxed);
+        }
+
+        auto push(node* new_tail) -> void
+        {
+            new_tail->next.store(nullptr, std::memory_order_relaxed);
+
+            // No other threads can push without holding the lock.
+            // How strong does the memory order need to be?
+            auto* t = tail_.load(std::memory_order_relaxed);
+
+            auto ok = tail_.compare_exchange_weak(
+                t, new_tail, std::memory_order_relaxed, std::memory_order_relaxed);
+            assert(ok);
+
+            // (Q1) update old tail to point to the new tail
+            // synchronizes with (Q3)
+            t->next.store(new_tail, std::memory_order_release);
+        }
+
+        auto try_pop() -> node*
+        {
+            // (Q2) grab the head node
+            // synchronizes with (Q4)
+            auto* h = head_.load(std::memory_order_acquire);
+
+            for (;;) {
+                // (Q3) if next is empty, give up
+                // synchronizes with (Q1)
+                auto* next = h->next.load(std::memory_order_acquire);
+                if (next == nullptr) {
+                    return nullptr;
+                }
+
+                // (Q4) update head
+                // synchronizes with (Q2)
+                if (head_.compare_exchange_weak(
+                        h, next, std::memory_order_release, std::memory_order_acquire)) {
+                    break;
+                }
+            }
+
+            return h;
+        }
+
+      private:
+        alignas(hardware_destructive_interference_size) std::atomic<node*> head_{};
+        alignas(hardware_destructive_interference_size) std::atomic<node*> tail_{};
     };
 
-    /// Construct a queue, initializing with nodes from a separate pool
-    queue(node* first, node* last);
-
-    auto push(node* new_tail) -> void;
-    auto try_pop() -> node*;
-
-  private:
-    alignas(hardware_destructive_interference_size) std::atomic<node*> head_{};
-    alignas(hardware_destructive_interference_size) std::atomic<node*> tail_{};
-};
-
-queue::queue(queue::node* first, queue::node* last)
-{
-    assert(first != last);
-    assert(first != nullptr);
-
-    head_.store(first, std::memory_order_relaxed);
-
-    auto* prev = first;
-    while (++first != last) {
-        prev->next = first;
-        prev = first;
-    }
-
-    prev->next = nullptr;
-    tail_.store(prev, std::memory_order_relaxed);
-}
-
-auto queue::push(queue::node* new_tail) -> void
-{
-    new_tail->next.store(nullptr, std::memory_order_relaxed);
-
-    // No other threads can push without holding the lock.
-    // How strong does the memory order need to be?
-    auto* t = tail_.load(std::memory_order_relaxed);
-
-    auto ok = tail_.compare_exchange_weak(
-        t, new_tail, std::memory_order_relaxed, std::memory_order_relaxed);
-    assert(ok);
-
-    // (Q1) update old tail to point to the new tail
-    // synchronizes with (Q3)
-    t->next.store(new_tail, std::memory_order_release);
-}
-
-auto queue::try_pop() -> node*
-{
-    // (Q2) grab the head node
-    // synchronizes with (Q4)
-    auto* h = head_.load(std::memory_order_acquire);
-
-    for (;;) {
-        // (Q3) if next is empty, give up
-        // synchronizes with (Q1)
-        auto* next = h->next.load(std::memory_order_acquire);
-        if (next == nullptr) {
-            return nullptr;
-        }
-
-        // (Q4) update head
-        // synchronizes with (Q2)
-        if (head_.compare_exchange_weak(
-                h, next, std::memory_order_release, std::memory_order_acquire)) {
-            break;
-        }
-    }
-
-    return h;
-}
-
-
-template <std::size_t N>
-class clh_mutex {
-    static_assert(N > 1, "Number of nodes must be greater than 1.");
-
-    std::array<queue::node, N> node_storage_{};
+    std::array<typename queue::node, N + 2> node_storage_{};
 
     queue available_;
 
-    alignas(hardware_destructive_interference_size)
-    std::atomic<queue::node*> tail_{};
+    alignas(hardware_destructive_interference_size) std::atomic<typename queue::node*> tail_{};
 
-    // The node that has been granted exclusive access
-  std::atomic<queue::node*> active_;
+    // Node granted exclusive access
+    typename queue::node* active_;
 
   public:
     clh_mutex() : available_(node_storage_.begin(), node_storage_.end())
@@ -214,10 +229,23 @@ class clh_mutex {
 
     auto lock()
     {
-        // get a node
         auto* n = available_.try_pop();
-        if (n == nullptr) {
-            throw error_on_slots_exceeded();
+        for (;;) {
+            // get a node
+            if (n != nullptr) {
+                break;
+            }
+
+            if (std::is_same_v<failure::retry, Failure>) {
+                // This can fail due to ABA - if after popping the head, but before
+                // loading head->next, the entire queue gets popped/pushed by other
+                // threads.
+                // This could be resolved by DCAS but there are no standard library
+                // functions to use that and requires more implementation work.
+                n = available_.try_pop();
+            } else {
+                throw error_on_slots_exceeded();
+            }
         }
 
         // signal intent to acquire lock
@@ -240,16 +268,14 @@ class clh_mutex {
         // recycle the predecessor node
         available_.push(pred);
 
-        active_.store(n, std::memory_order_relaxed);
+        active_ = n;
     }
 
     auto unlock()
     {
-      auto* n = active_.load(std::memory_order_relaxed);
-
         // (C4) release lock
         // synchronizes with (C3)
-          n->locked.store(false, std::memory_order_release);
+        active_->locked.store(false, std::memory_order_release);
     }
 
     auto try_lock();
