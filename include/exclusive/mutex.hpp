@@ -127,12 +127,18 @@ class clh_mutex {
     static_assert(std::disjunction_v<std::is_same<failure::retry, Failure>,
                                      std::is_same<failure::die, Failure>>);
 
-    /// A node queue for the clh_mutex
+    /// A node queue for a clh_mutex with timeout
     class queue {
       public:
         struct alignas(hardware_destructive_interference_size) node {
-            std::atomic_bool locked{};
+            /// Intrusive pointer to the next node. Used while a node is available.
             std::atomic<node*> next{};
+
+            /// The predecessor to wait on. Set if node is abandoned due to timeout.
+            node* pred{};
+
+            /// Set if a thread is intending to acquire the lock
+            std::atomic_bool locked{};
         };
 
         /// Construct a queue, initializing with nodes from a separate pool
@@ -235,24 +241,17 @@ class clh_mutex {
         assert(try_lock_for(10 * years));
     }
 
-    auto unlock()
-    {
-        // (C4) release lock
-        // synchronizes with (C3)
-        active_->locked.store(false, std::memory_order_release);
-    }
-
-    auto try_lock() -> bool { return try_lock_for(std::chrono::milliseconds{1}); }
+    auto try_lock() -> bool { return try_lock_for(std::chrono::seconds{0}); }
 
     template <class Rep, class Period>
-    auto try_lock_for(const std::chrono::duration<Rep, Period>& timeout_duration) -> bool
+    auto try_lock_for(const std::chrono::duration<Rep, Period>& duration) -> bool
     {
-        if (timeout_duration <= timeout_duration.zero()) {
-            return false;
-        }
+        return try_lock_until(steady_clock_t::now() + duration);
+    }
 
-        auto deadline = steady_clock_t::now() + timeout_duration;
-
+    template <class Clock, class Duration>
+    auto try_lock_until(const std::chrono::time_point<Clock, Duration>& deadline) -> bool
+    {
         auto* n = try_pop_node_until(deadline);
         if (n == nullptr) {
             return false;
@@ -275,21 +274,47 @@ class clh_mutex {
             }
         }
 
-        // (C3) spin on predecessor until the lock is released
-        // synchronizes with (C4)
-        while (pred->locked.load(std::memory_order_acquire)) {
-            if (steady_clock_t::now() >= deadline) {
-                // TODO Handle abandon and cleanup!
-                return false;
+        for (;;) {
+            // (C3) spin on predecessor until the lock is released
+            // synchronizes with (C4),(C5)
+            while (pred->locked.load(std::memory_order_acquire)) {
+                if (steady_clock_t::now() >= deadline) {
+                    // propagate the predecessor to denote abandonment
+                    n->pred = pred;
+
+                    // (C4) release lock
+                    // synchronizes with (C3)
+                    n->locked.store(false, std::memory_order_release);
+                    return false;
+                }
+            }
+
+            // save pred's pred in case it needs to be waited upon
+            auto* abandonned = pred->pred;
+
+            // recycle the predecessor node
+            available_.push(pred);
+
+            // check if pred was abandonned due to timeout
+            if (abandonned) {
+                pred = abandonned;
+            } else {
+                break;
             }
         }
 
-        // recycle the predecessor node
-        available_.push(pred);
-
         active_ = n;
-
         return true;
+    }
+
+    auto unlock()
+    {
+        // clear the predecessor, no timeout here
+        active_->pred = nullptr;
+
+        // (C5) release lock
+        // synchronizes with (C3)
+        active_->locked.store(false, std::memory_order_release);
     }
 
   private:

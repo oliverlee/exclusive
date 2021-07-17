@@ -173,8 +173,11 @@ TEST(ClhLock, TryLockForNonPositiveDuration)
 
     auto mut = exclusive::clh_mutex<1>{};
 
-    EXPECT_FALSE(mut.try_lock_for(0s));
-    EXPECT_FALSE(mut.try_lock_for(-1s));
+    EXPECT_TRUE(mut.try_lock_for(0s));
+    mut.unlock();
+
+    EXPECT_TRUE(mut.try_lock_for(-1s));
+    mut.unlock();
 }
 
 TEST(ClhLock, WhileLockedTryLockForShortDuration)
@@ -193,7 +196,7 @@ TEST(ClhLock, WhileLockedTryLockForShortDuration)
     auto has_access = on_access.get_future();
 
     auto release_access = std::promise<void>{};
-    auto tasks = std::async(
+    auto task = std::async(
         std::launch::async, access_and_wait, std::move(on_access), release_access.get_future());
 
     has_access.get();
@@ -206,4 +209,33 @@ TEST(ClhLock, WhileLockedTryLockForShortDuration)
     EXPECT_EQ(500, dt.count());
 
     release_access.set_value();
+}
+
+TEST(ClhLock, TestWithTimeoutAbandonned)
+{
+    using namespace std::chrono_literals;
+
+    auto mut = exclusive::clh_mutex<3>{};
+
+    const auto access_and_wait = [&mut](auto on_access, auto hold_until) {
+        auto access_scope = std::scoped_lock{mut};
+        on_access.set_value();
+        hold_until.get();
+    };
+
+    auto on_access = std::promise<void>{};
+    auto has_access = on_access.get_future();
+
+    auto release_access = std::promise<void>{};
+    auto task = std::async(
+        std::launch::async, access_and_wait, std::move(on_access), release_access.get_future());
+
+    has_access.get();
+
+    EXPECT_FALSE(mut.try_lock_for(500ms));
+
+    release_access.set_value();
+    task.get();
+
+    EXPECT_TRUE(mut.try_lock_for(500ms));
 }
