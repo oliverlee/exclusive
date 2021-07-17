@@ -11,8 +11,14 @@ Checks: >
     # don't manually warn about backward branches,
     -altera-id-dependent-backward-branch,
 
+    # allow use of assert,
+    -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+
     # don't force wide contracts,
     -cppcoreguidelines-pro-bounds-constant-array-index,
+
+    # allow pointer/iterator arithmetic,
+    -cppcoreguidelines-pro-bounds-pointer-arithmetic,
 
     # disable things I want to do,
     -fuchsia-default-arguments-calls,

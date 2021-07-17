@@ -4,9 +4,10 @@ exports_files([".clang-tidy"], visibility=["//:__subpackages__"])
 
 cc_library(
     name = "exclusive",
-    hdrs = glob([
-        "include/exclusive/*.hpp",
-    ]),
+    hdrs = [
+        "include/exclusive/exclusive.hpp",
+        "include/exclusive/mutex.hpp",
+    ],
     copts = PROJECT_DEFAULT_COPTS,
     strip_include_prefix = "include",
     visibility = ["//visibility:public"],
