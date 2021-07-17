@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cassert>
+#include <chrono>
 #include <cstddef>
 #include <mutex>
 #include <new>
@@ -199,6 +200,9 @@ class clh_mutex {
         alignas(hardware_destructive_interference_size) std::atomic<node*> tail_{};
     };
 
+    // Pool of nodes for the mutex queue
+    // Adds 1 to start in the tail, 1 as the queue sentinel, leaving N available
+    // nodes for threads.
     std::array<typename queue::node, N + 2> node_storage_{};
 
     queue available_;
@@ -227,23 +231,31 @@ class clh_mutex {
 
     auto lock()
     {
-        auto* n = available_.try_pop();
-        for (;;) {
-            // get a node
-            if (n != nullptr) {
-                break;
-            }
+        static constexpr auto years = std::chrono::hours{24 * 365};
+        assert(try_lock_for(10 * years));
+    }
 
-            if (std::is_same_v<failure::retry, Failure>) {
-                // This can fail due to ABA - if after popping the head, but before
-                // loading head->next, the entire queue gets popped/pushed by other
-                // threads.
-                // This could be resolved by DCAS but there are no standard library
-                // functions to use that and requires more implementation work.
-                n = available_.try_pop();
-            } else {
-                throw error_on_slots_exceeded();
-            }
+    auto unlock()
+    {
+        // (C4) release lock
+        // synchronizes with (C3)
+        active_->locked.store(false, std::memory_order_release);
+    }
+
+    auto try_lock() -> bool { return try_lock_for(std::chrono::milliseconds{1}); }
+
+    template <class Rep, class Period>
+    auto try_lock_for(const std::chrono::duration<Rep, Period>& timeout_duration) -> bool
+    {
+        if (timeout_duration <= timeout_duration.zero()) {
+            return false;
+        }
+
+        auto deadline = steady_clock_t::now() + timeout_duration;
+
+        auto* n = try_pop_node_until(deadline);
+        if (n == nullptr) {
+            return false;
         }
 
         // signal intent to acquire lock
@@ -257,26 +269,51 @@ class clh_mutex {
         // next thread
         // synchronizes with (C1)
         while (!tail_.compare_exchange_weak(
-            pred, n, std::memory_order_release, std::memory_order_acquire)) {}
+            pred, n, std::memory_order_release, std::memory_order_acquire)) {
+            if (steady_clock_t::now() >= deadline) {
+                return false;
+            }
+        }
 
         // (C3) spin on predecessor until the lock is released
         // synchronizes with (C4)
-        while (pred->locked.load(std::memory_order_acquire)) {}
+        while (pred->locked.load(std::memory_order_acquire)) {
+            if (steady_clock_t::now() >= deadline) {
+                // TODO Handle abandon and cleanup!
+                return false;
+            }
+        }
 
         // recycle the predecessor node
         available_.push(pred);
 
         active_ = n;
+
+        return true;
     }
 
-    auto unlock()
+  private:
+    using steady_clock_t = std::chrono::steady_clock;
+    using steady_time_t = std::chrono::time_point<std::chrono::steady_clock>;
+
+    auto try_pop_node_until(const steady_time_t& deadline)
     {
-        // (C4) release lock
-        // synchronizes with (C3)
-        active_->locked.store(false, std::memory_order_release);
-    }
+        auto* n = available_.try_pop();
 
-    auto try_lock();
+        while ((n == nullptr) && (steady_clock_t::now() < deadline)) {
+            // This can fail due to ABA - if after popping the head, but before
+            // loading head->next, the entire queue gets popped/pushed by other
+            // threads.
+            // This could be resolved by DCAS but there are no standard library
+            // functions to use that and requires more implementation work.
+            if (std::is_same_v<failure::die, Failure>) {
+                throw error_on_slots_exceeded();
+            }
+            n = available_.try_pop();
+        }
+
+        return n;
+    }
 };
 
 }  // namespace exclusive

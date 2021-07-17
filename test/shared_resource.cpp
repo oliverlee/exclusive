@@ -166,3 +166,44 @@ TEST(SharedResourceClhLock, ThrowsWhenSlotsExceeded)
     p2.set_value();
     p3.set_value();
 }
+
+TEST(ClhLock, TryLockForNonPositiveDuration)
+{
+    using namespace std::literals::chrono_literals;
+
+    auto mut = exclusive::clh_mutex<1>{};
+
+    EXPECT_FALSE(mut.try_lock_for(0s));
+    EXPECT_FALSE(mut.try_lock_for(-1s));
+}
+
+TEST(ClhLock, WhileLockedTryLockForShortDuration)
+{
+    using namespace std::chrono_literals;
+
+    auto mut = exclusive::clh_mutex<1>{};
+
+    const auto access_and_wait = [&mut](auto on_access, auto hold_until) {
+        auto access_scope = std::scoped_lock{mut};
+        on_access.set_value();
+        hold_until.get();
+    };
+
+    auto on_access = std::promise<void>{};
+    auto has_access = on_access.get_future();
+
+    auto release_access = std::promise<void>{};
+    auto tasks = std::async(
+        std::launch::async, access_and_wait, std::move(on_access), release_access.get_future());
+
+    has_access.get();
+
+    auto start = std::chrono::steady_clock::now();
+    EXPECT_FALSE(mut.try_lock_for(500ms));
+    auto end = std::chrono::steady_clock::now();
+
+    auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    EXPECT_EQ(500, dt.count());
+
+    release_access.set_value();
+}
