@@ -220,9 +220,14 @@ class clh_mutex {
     // Node granted exclusive access
     typename queue::node* active_;
 
+    // Number of times a node has been acquired (thread has queued for the lock)
+    std::atomic_uint queue_count_{};
+
   public:
     clh_mutex() : available_(node_storage_.begin(), node_storage_.end())
     {
+        queue_count_.store(0, std::memory_order_relaxed);
+
         auto* n = available_.try_pop();
         assert(n != nullptr);
 
@@ -276,6 +281,10 @@ class clh_mutex {
             }
         }
 
+        // (X1) increase counter for observation in tests
+        // synchronizes with (X2)
+        queue_count_.fetch_add(1, std::memory_order_release);
+
         for (;;) {
             // (C3) spin on predecessor until the lock is released
             // synchronizes with (C4),(C5)
@@ -317,6 +326,15 @@ class clh_mutex {
         // (C5) release lock
         // synchronizes with (C3)
         active_->locked.store(false, std::memory_order_release);
+    }
+
+    // Number of times a thread has requested a lock and queued up
+    // NOTE: This only exists for testing fairness
+    [[nodiscard]] auto queue_count() const -> unsigned int
+    {
+        // (X2) load queue count
+        // synchronizes with (X1)
+        return queue_count_.load(std::memory_order_acquire);
     }
 
   private:

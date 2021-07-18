@@ -27,9 +27,15 @@ auto queue_n_with_timeouts(Mutex& mut, Durations... dur) -> std::vector<test::Ac
     tasks.emplace_back(mut);
     tasks.front().wait_for_access();
 
-    const auto spawn_next = [&mut, &tasks](auto d) {
+    auto count = 1U;
+    while (count != mut.queue_count()) {}
+
+    const auto spawn_next = [&mut, &tasks, &count](auto d) {
         tasks.emplace_back(mut, d);
-        while (!tasks.back().template status_is<std::future_status::timeout>()) {}
+
+        ++count;
+        while (count != mut.queue_count()) {}
+
         return 0;
     };
 
@@ -94,19 +100,12 @@ TEST(ClhLock, FairnessInQueueAccess)
     EXPECT_FALSE(task[2].has_access());
 
     EXPECT_TRUE(task[0].terminate());
+    task[1].wait_for_access();
 
-    while (!(task[1].has_access() || task[2].has_access())) {}
+    EXPECT_TRUE(task[1].terminate());
+    task[2].wait_for_access();
 
-    const auto t1_next = task[1].has_access();
-    EXPECT_TRUE(t1_next);
-
-    // Fix so this doesn't happen!
-    const auto [b, c] = t1_next ? std::pair{1U, 2U} : std::pair{2U, 1U};
-
-    EXPECT_TRUE(task[b].terminate());
-
-    task[c].wait_for_access();
-    EXPECT_TRUE(task[c].terminate());
+    EXPECT_TRUE(task[2].terminate());
 }
 
 // Given a clh_mutex and 3 threads requesting access in order,
