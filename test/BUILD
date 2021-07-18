@@ -11,3 +11,25 @@ cc_test(
       "@googletest//:gtest_main",
   ],
 )
+
+cc_test(
+  name = "clh",
+  size = "small",
+  srcs = ["clh.cpp"],
+  copts = PROJECT_DEFAULT_COPTS,
+  deps = [
+      "//:exclusive",
+      "@googletest//:gtest_main",
+  ],
+)
+
+cc_test(
+  name = "clh_walltime",
+  size = "small",
+  srcs = ["clh_walltime.cpp"],
+  copts = PROJECT_DEFAULT_COPTS,
+  deps = [
+      "//:exclusive",
+      "@googletest//:gtest_main",
+  ],
+)

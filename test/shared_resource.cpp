@@ -1,10 +1,11 @@
 #include "exclusive/exclusive.hpp"
 
+#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include <algorithm>
-#include <chrono>
 #include <cstddef>
 #include <future>
+#include <system_error>
 #include <thread>
 
 namespace {
@@ -159,83 +160,9 @@ TEST(SharedResourceClhLock, ThrowsWhenSlotsExceeded)
         }
     }
 
-    ASSERT_LE(1, num_waiting);
-    ASSERT_GE(2, num_waiting);
+    EXPECT_THAT(num_waiting, testing::AllOf(testing::Ge(1), testing::Le(2)));
 
     p1.set_value();
     p2.set_value();
     p3.set_value();
-}
-
-TEST(ClhLock, TryLockForNonPositiveDuration)
-{
-    using namespace std::literals::chrono_literals;
-
-    auto mut = exclusive::clh_mutex<1>{};
-
-    EXPECT_TRUE(mut.try_lock_for(0s));
-    mut.unlock();
-
-    EXPECT_TRUE(mut.try_lock_for(-1s));
-    mut.unlock();
-}
-
-TEST(ClhLock, WhileLockedTryLockForShortDuration)
-{
-    using namespace std::chrono_literals;
-
-    auto mut = exclusive::clh_mutex<1>{};
-
-    const auto access_and_wait = [&mut](auto on_access, auto hold_until) {
-        auto access_scope = std::scoped_lock{mut};
-        on_access.set_value();
-        hold_until.get();
-    };
-
-    auto on_access = std::promise<void>{};
-    auto has_access = on_access.get_future();
-
-    auto release_access = std::promise<void>{};
-    auto task = std::async(
-        std::launch::async, access_and_wait, std::move(on_access), release_access.get_future());
-
-    has_access.get();
-
-    auto start = std::chrono::steady_clock::now();
-    EXPECT_FALSE(mut.try_lock_for(500ms));
-    auto end = std::chrono::steady_clock::now();
-
-    auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    EXPECT_EQ(500, dt.count());
-
-    release_access.set_value();
-}
-
-TEST(ClhLock, TestWithTimeoutAbandonned)
-{
-    using namespace std::chrono_literals;
-
-    auto mut = exclusive::clh_mutex<3>{};
-
-    const auto access_and_wait = [&mut](auto on_access, auto hold_until) {
-        auto access_scope = std::scoped_lock{mut};
-        on_access.set_value();
-        hold_until.get();
-    };
-
-    auto on_access = std::promise<void>{};
-    auto has_access = on_access.get_future();
-
-    auto release_access = std::promise<void>{};
-    auto task = std::async(
-        std::launch::async, access_and_wait, std::move(on_access), release_access.get_future());
-
-    has_access.get();
-
-    EXPECT_FALSE(mut.try_lock_for(500ms));
-
-    release_access.set_value();
-    task.get();
-
-    EXPECT_TRUE(mut.try_lock_for(500ms));
 }
