@@ -1,4 +1,5 @@
 #include "exclusive/exclusive.hpp"
+#include "exclusive/test/access_task.hpp"
 
 // Test depending on wall time. These may be flaky if run on a loaded machine.
 
@@ -11,6 +12,7 @@
 
 namespace {
 using namespace std::chrono_literals;
+namespace test = exclusive::test;
 
 constexpr auto WALL_TIME_WAIT_DURATION = 100ms;
 constexpr auto TOL = WALL_TIME_WAIT_DURATION / 10;
@@ -23,30 +25,22 @@ TEST(ClhLockWallTime, WhileLockedTryLockForShortDuration)
 {
     auto mut = exclusive::clh_mutex<1>{};
 
-    const auto access_and_wait = [&mut](auto on_access, auto hold_until) {
-        auto access_scope = std::scoped_lock{mut};
-        on_access.set_value();
-        hold_until.get();
-    };
+    // launch a thread to acquire the lock
+    const auto deadline = std::chrono::steady_clock::now() + 24h;
+    auto task1 = test::AccessTask{mut, deadline};
+    task1.wait_until_access();
 
-    auto on_access = std::promise<void>{};
-    auto has_access = on_access.get_future();
-
-    auto release_access = std::promise<void>{};
-    auto task = std::async(
-        std::launch::async, access_and_wait, std::move(on_access), release_access.get_future());
-
-    has_access.get();
-
+    // verify that `try_lock_for` fails due to timeout
     const auto start = std::chrono::steady_clock::now();
     EXPECT_FALSE(mut.try_lock_for(WALL_TIME_WAIT_DURATION));
     const auto end = std::chrono::steady_clock::now();
 
+    // chcke that elapsed time roughly matches the requested duration
     EXPECT_THAT((end - start),
                 testing::AllOf(testing::Ge(WALL_TIME_WAIT_DURATION),
                                testing::Le(WALL_TIME_WAIT_DURATION + TOL)));
 
-    release_access.set_value();
+    task1.terminate();
 }
 
 // Given a clh_mutex locked by another thread,
@@ -57,25 +51,13 @@ TEST(ClhLockWallTime, TestWithTimeoutAbandonned)
 {
     auto mut = exclusive::clh_mutex<3>{};
 
-    const auto access_and_wait = [&mut](auto on_access, auto hold_until) {
-        auto access_scope = std::scoped_lock{mut};
-        on_access.set_value();
-        hold_until.get();
-    };
-
-    auto on_access = std::promise<void>{};
-    auto has_access = on_access.get_future();
-
-    auto release_access = std::promise<void>{};
-    auto task = std::async(
-        std::launch::async, access_and_wait, std::move(on_access), release_access.get_future());
-
-    has_access.get();
+    // launch a thread to acquire the lock
+    auto task1 = test::AccessTask{mut};
+    task1.wait_until_access();
 
     EXPECT_FALSE(mut.try_lock_for(WALL_TIME_WAIT_DURATION));
 
-    release_access.set_value();
-    task.get();
+    task1.terminate();
 
     const auto start = std::chrono::steady_clock::now();
     EXPECT_TRUE(mut.try_lock_for(WALL_TIME_WAIT_DURATION));
