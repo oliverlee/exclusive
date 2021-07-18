@@ -31,7 +31,7 @@ constexpr std::size_t hardware_destructive_interference_size = 2 * sizeof(std::m
 /// @brief Array-based queue mutex
 /// @tparam N Number of slots
 ///
-/// @note Implements Mutex
+/// @note Implements Mutex (sortof)
 template <std::size_t N>
 class array_mutex {
     static_assert((std::size_t(-1) % N) == (N - 1U), "N must be a power of 2.");
@@ -107,7 +107,7 @@ struct retry {};
 struct die {};
 }  // namespace failure
 
-/// Mutex implementing a CLH Queue Lock
+/// @brief Mutex implementing a CLH Queue Lock
 ///
 /// @tparam N Number of nodes in the fixed sized pool. Should match the number
 ///     of concurrent threads accessing the lock. Additional nodes may be used
@@ -120,6 +120,7 @@ struct die {};
 /// A node will be recycled to the available pool of nodes after a thread
 /// unlocks.
 ///
+/// @note Implements TimedMutex
 template <std::size_t N, class Failure = failure::retry>
 class clh_mutex {
     static_assert(N > 0, "Number of nodes must be greater than 0.");
@@ -246,7 +247,7 @@ class clh_mutex {
     template <class Rep, class Period>
     auto try_lock_for(const std::chrono::duration<Rep, Period>& duration) -> bool
     {
-        return try_lock_until(steady_clock_t::now() + duration);
+        return try_lock_until(std::chrono::steady_clock::now() + duration);
     }
 
     template <class Clock, class Duration>
@@ -269,7 +270,7 @@ class clh_mutex {
         // synchronizes with (C1)
         while (!tail_.compare_exchange_weak(
             pred, n, std::memory_order_release, std::memory_order_acquire)) {
-            if (steady_clock_t::now() >= deadline) {
+            if (Clock::now() >= deadline) {
                 return false;
             }
         }
@@ -278,7 +279,7 @@ class clh_mutex {
             // (C3) spin on predecessor until the lock is released
             // synchronizes with (C4),(C5)
             while (pred->locked.load(std::memory_order_acquire)) {
-                if (steady_clock_t::now() >= deadline) {
+                if (Clock::now() >= deadline) {
                     // propagate the predecessor to denote abandonment
                     n->pred = pred;
 
@@ -318,14 +319,12 @@ class clh_mutex {
     }
 
   private:
-    using steady_clock_t = std::chrono::steady_clock;
-    using steady_time_t = std::chrono::time_point<std::chrono::steady_clock>;
-
-    auto try_pop_node_until(const steady_time_t& deadline)
+    template <class Clock, class Duration>
+    auto try_pop_node_until(const std::chrono::time_point<Clock, Duration>& deadline)
     {
         auto* n = available_.try_pop();
 
-        while ((n == nullptr) && (steady_clock_t::now() < deadline)) {
+        while ((n == nullptr) && (Clock::now() < deadline)) {
             // This can fail due to ABA - if after popping the head, but before
             // loading head->next, the entire queue gets popped/pushed by other
             // threads.
