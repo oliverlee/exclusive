@@ -18,3 +18,5 @@ build:ubsan --action_env=CC=gcc
 
 test --test_output=all
 test --test_verbose_timeout_warnings
+test --test_output=streamed
+test --cache_test_results=no

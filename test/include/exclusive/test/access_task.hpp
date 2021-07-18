@@ -34,15 +34,19 @@ class AccessTask {
     template <class Clock, class Duration>
     AccessTask(Mutex& mut, const std::chrono::time_point<Clock, Duration>& deadline)
         : access_fut_{access_signal_.get_future()},
-          task_{std::async(std::launch::async, [this, &mut, deadline] {
-              if (auto access_scope = std::unique_lock{mut, deadline}) {
-                  access_signal_.set_value();
-                  terminate_signal_.get_future().wait();
-                  return true;
-              }
+          task_{std::async(
+              std::launch::async,
+              [&mut, deadline](auto on_access, auto terminate_after) {
+                  if (auto access_scope = std::unique_lock{mut, deadline}) {
+                      on_access.set_value();
+                      terminate_after.wait();
+                      return true;
+                  }
 
-              return false;
-          })}
+                  return false;
+              },
+              std::move(access_signal_),
+              terminate_signal_.get_future())}
     {}
 
     AccessTask(AccessTask&&) noexcept = default;
@@ -82,7 +86,11 @@ class AccessTask {
     }
 
     /// @brief Block until the task acquires exclusive access
-    auto wait_for_access() const -> void { return access_fut_.wait(); }
+    auto wait_for_access() const -> void
+    {
+        assert(access_fut_.valid());
+        return access_fut_.wait();
+    }
 };
 
 template <class Mutex, class Clock, class Duration>

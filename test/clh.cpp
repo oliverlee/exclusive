@@ -94,12 +94,19 @@ TEST(ClhLock, FairnessInQueueAccess)
     EXPECT_FALSE(task[2].has_access());
 
     EXPECT_TRUE(task[0].terminate());
-    task[1].wait_for_access();
 
-    EXPECT_TRUE(task[1].terminate());
-    task[2].wait_for_access();
+    while (!(task[1].has_access() || task[2].has_access())) {}
 
-    EXPECT_TRUE(task[2].terminate());
+    const auto t1_next = task[1].has_access();
+    EXPECT_TRUE(t1_next);
+
+    // Fix so this doesn't happen!
+    const auto [b, c] = t1_next ? std::pair{1U, 2U} : std::pair{2U, 1U};
+
+    EXPECT_TRUE(task[b].terminate());
+
+    task[c].wait_for_access();
+    EXPECT_TRUE(task[c].terminate());
 }
 
 // Given a clh_mutex and 3 threads requesting access in order,
