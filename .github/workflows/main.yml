@@ -9,6 +9,8 @@ on:
 env:
   BAZEL_VERSION: "4.1.0"
   LLVM_VERSION: 13
+  GTEST_COLOR: 1
+  FAKE_CLOCK_REPEAT_COUNT: 100
 
 jobs:
   test:
@@ -64,11 +66,12 @@ jobs:
     - name: Build and Test
       run: |
         bazel build --config=${{ matrix.config }} //...
-        bazel test --config=${{ matrix.config }} //test:clh --test_filter='*Fair*'
-        bazel test --config=${{ matrix.config }} //test:clh --test_filter='*Fair*'
-        bazel test --config=${{ matrix.config }} //test:clh --test_filter='*Fair*'
-        bazel test --config=${{ matrix.config }} //test:clh --test_filter='*Fair*'
-        bazel test --config=${{ matrix.config }} //test:clh --test_filter='*Fair*'
+        bazel test --config=${{ matrix.config }} //...
+
+    - name: Repeat fake clock tests
+      run: |
+        bazel build //...
+        ./bazel-bin/test/clh --gtest_repeat=${FAKE_CLOCK_REPEAT_COUNT} --gtest_break_on_failure
 
         #  format:
         #    runs-on: ubuntu-latest
