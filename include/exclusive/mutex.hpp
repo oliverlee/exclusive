@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cassert>
+#include <chrono>
 #include <cstddef>
 #include <mutex>
 #include <new>
@@ -30,7 +31,7 @@ constexpr std::size_t hardware_destructive_interference_size = 2 * sizeof(std::m
 /// @brief Array-based queue mutex
 /// @tparam N Number of slots
 ///
-/// @note Implements Mutex
+/// @note Implements Mutex (sortof)
 template <std::size_t N>
 class array_mutex {
     static_assert((std::size_t(-1) % N) == (N - 1U), "N must be a power of 2.");
@@ -46,10 +47,8 @@ class array_mutex {
     // must be performed before indexing `flag_`.
     std::atomic_size_t tail_{};
 
-    // Slot that each thread spins on.
-    // FIXME Use of `thread_local` prevents more than one instance of an array_mutex<N>.
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-    thread_local static std::size_t slot;
+    // Slot granted exclusive access
+    std::size_t active_{};
 
   public:
     array_mutex()
@@ -79,17 +78,21 @@ class array_mutex {
     // TODO handle timeout?
     auto lock()
     {
-        slot = tail_.fetch_add(1, std::memory_order_relaxed) % N;
+        auto slot = tail_.fetch_add(1, std::memory_order_relaxed) % N;
         while (!flag_[slot].value.load(std::memory_order_acquire)) {}
 
         if (flag_[slot].in_use.test_and_set()) {
             throw error_on_slots_exceeded();
         }
+
+        active_ = slot;
     }
 
     /// Unlocks the mutex
     auto unlock()
     {
+        auto slot = active_;
+
         flag_[slot].value.store(false, std::memory_order_relaxed);
         flag_[(1U + slot) % N].in_use.clear();
         flag_[(1U + slot) % N].value.store(true, std::memory_order_release);
@@ -98,17 +101,13 @@ class array_mutex {
     auto try_lock();
 };
 
-template <std::size_t N>
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-thread_local std::size_t array_mutex<N>::slot;
-
 /// Tag types for selecting behavior on lock failure
 namespace failure {
 struct retry {};
 struct die {};
 }  // namespace failure
 
-/// Mutex implementing a CLH Queue Lock
+/// @brief Mutex implementing a CLH Queue Lock
 ///
 /// @tparam N Number of nodes in the fixed sized pool. Should match the number
 ///     of concurrent threads accessing the lock. Additional nodes may be used
@@ -121,6 +120,7 @@ struct die {};
 /// A node will be recycled to the available pool of nodes after a thread
 /// unlocks.
 ///
+/// @note Implements TimedMutex
 template <std::size_t N, class Failure = failure::retry>
 class clh_mutex {
     static_assert(N > 0, "Number of nodes must be greater than 0.");
@@ -128,12 +128,18 @@ class clh_mutex {
     static_assert(std::disjunction_v<std::is_same<failure::retry, Failure>,
                                      std::is_same<failure::die, Failure>>);
 
-    /// A node queue for the clh_mutex
+    /// A node queue for a clh_mutex with timeout
     class queue {
       public:
         struct alignas(hardware_destructive_interference_size) node {
-            std::atomic_bool locked{};
+            /// Intrusive pointer to the next node. Used while a node is available.
             std::atomic<node*> next{};
+
+            /// The predecessor to wait on. Set if node is abandoned due to timeout.
+            node* pred{};
+
+            /// Set if a thread is intending to acquire the lock
+            std::atomic_bool locked{};
         };
 
         /// Construct a queue, initializing with nodes from a separate pool
@@ -162,7 +168,8 @@ class clh_mutex {
             // How strong does the memory order need to be?
             auto* t = tail_.load(std::memory_order_relaxed);
 
-            auto ok = tail_.compare_exchange_weak(
+            // Spurious failure is not okay here
+            auto ok = tail_.compare_exchange_strong(
                 t, new_tail, std::memory_order_relaxed, std::memory_order_relaxed);
             assert(ok);
 
@@ -201,6 +208,9 @@ class clh_mutex {
         alignas(hardware_destructive_interference_size) std::atomic<node*> tail_{};
     };
 
+    // Pool of nodes for the mutex queue
+    // Adds 1 to start in the tail, 1 as the queue sentinel, leaving N available
+    // nodes for threads.
     std::array<typename queue::node, N + 2> node_storage_{};
 
     queue available_;
@@ -229,23 +239,24 @@ class clh_mutex {
 
     auto lock()
     {
-        auto* n = available_.try_pop();
-        for (;;) {
-            // get a node
-            if (n != nullptr) {
-                break;
-            }
+        static constexpr auto years = std::chrono::hours{24 * 365};
+        assert(try_lock_for(10 * years));
+    }
 
-            if (std::is_same_v<failure::retry, Failure>) {
-                // This can fail due to ABA - if after popping the head, but before
-                // loading head->next, the entire queue gets popped/pushed by other
-                // threads.
-                // This could be resolved by DCAS but there are no standard library
-                // functions to use that and requires more implementation work.
-                n = available_.try_pop();
-            } else {
-                throw error_on_slots_exceeded();
-            }
+    auto try_lock() -> bool { return try_lock_for(std::chrono::seconds{0}); }
+
+    template <class Rep, class Period>
+    auto try_lock_for(const std::chrono::duration<Rep, Period>& duration) -> bool
+    {
+        return try_lock_until(std::chrono::steady_clock::now() + duration);
+    }
+
+    template <class Clock, class Duration>
+    auto try_lock_until(const std::chrono::time_point<Clock, Duration>& deadline) -> bool
+    {
+        auto* n = try_pop_node_until(deadline);
+        if (n == nullptr) {
+            return false;
         }
 
         // signal intent to acquire lock
@@ -259,26 +270,75 @@ class clh_mutex {
         // next thread
         // synchronizes with (C1)
         while (!tail_.compare_exchange_weak(
-            pred, n, std::memory_order_release, std::memory_order_acquire)) {}
+            pred, n, std::memory_order_release, std::memory_order_acquire)) {
+            if (Clock::now() >= deadline) {
+                return false;
+            }
+        }
 
-        // (C3) spin on predecessor until the lock is released
-        // synchronizes with (C4)
-        while (pred->locked.load(std::memory_order_acquire)) {}
+        for (;;) {
+            // (C3) spin on predecessor until the lock is released
+            // synchronizes with (C4),(C5)
+            while (pred->locked.load(std::memory_order_acquire)) {
+                if (Clock::now() >= deadline) {
+                    // propagate the predecessor to denote abandonment
+                    n->pred = pred;
 
-        // recycle the predecessor node
-        available_.push(pred);
+                    // (C4) release lock
+                    // synchronizes with (C3)
+                    n->locked.store(false, std::memory_order_release);
+                    return false;
+                }
+            }
+
+            // save pred's pred in case it needs to be waited upon
+            auto* abandonned = pred->pred;
+
+            // recycle the predecessor node
+            available_.push(pred);
+
+            // check if pred was abandonned due to timeout
+            if (abandonned) {
+                pred = abandonned;
+            } else {
+                break;
+            }
+        }
 
         active_ = n;
+        return true;
     }
 
     auto unlock()
     {
-        // (C4) release lock
+        // clear the predecessor, no timeout here
+        active_->pred = nullptr;
+
+        // (C5) release lock
         // synchronizes with (C3)
         active_->locked.store(false, std::memory_order_release);
     }
 
-    auto try_lock();
+  private:
+    template <class Clock, class Duration>
+    auto try_pop_node_until(const std::chrono::time_point<Clock, Duration>& deadline)
+    {
+        auto* n = available_.try_pop();
+
+        while ((n == nullptr) && (Clock::now() < deadline)) {
+            // This can fail due to ABA - if after popping the head, but before
+            // loading head->next, the entire queue gets popped/pushed by other
+            // threads.
+            // This could be resolved by DCAS but there are no standard library
+            // functions to use that and requires more implementation work.
+            if (std::is_same_v<failure::die, Failure>) {
+                throw error_on_slots_exceeded();
+            }
+            n = available_.try_pop();
+        }
+
+        return n;
+    }
 };
 
 }  // namespace exclusive

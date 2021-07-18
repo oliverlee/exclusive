@@ -1,10 +1,11 @@
 #include "exclusive/exclusive.hpp"
 
+#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include <algorithm>
-#include <chrono>
 #include <cstddef>
 #include <future>
+#include <system_error>
 #include <thread>
 
 namespace {
@@ -159,8 +160,7 @@ TEST(SharedResourceClhLock, ThrowsWhenSlotsExceeded)
         }
     }
 
-    ASSERT_LE(1, num_waiting);
-    ASSERT_GE(2, num_waiting);
+    EXPECT_THAT(num_waiting, testing::AllOf(testing::Ge(1), testing::Le(2)));
 
     p1.set_value();
     p2.set_value();
