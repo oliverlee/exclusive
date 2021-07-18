@@ -13,6 +13,8 @@ template <std::future_status Status, class T>
 auto status_is(const std::future<T>& fut) -> bool
 {
     using namespace std::literals::chrono_literals;
+
+    assert(fut.valid());
     return Status == fut.wait_for(0s);
 }
 
@@ -31,9 +33,7 @@ class AccessTask {
 
     template <class Clock, class Duration>
     AccessTask(Mutex& mut, const std::chrono::time_point<Clock, Duration>& deadline)
-        : access_signal_{},
-          access_fut_{access_signal_.get_future()},
-          terminate_signal_{},
+        : access_fut_{access_signal_.get_future()},
           task_{std::async(std::launch::async, [this, &mut, deadline] {
               if (auto access_scope = std::unique_lock{mut, deadline}) {
                   access_signal_.set_value();
@@ -45,9 +45,17 @@ class AccessTask {
           })}
     {}
 
+    AccessTask(AccessTask&&) noexcept = default;
+
+    AccessTask(const AccessTask&) = delete;
+    AccessTask& operator=(AccessTask&&) = delete;
+    AccessTask& operator=(const AccessTask&) = delete;
+
+    ~AccessTask() = default;
+
     /// @brief Check the status of the task
     template <std::future_status Status>
-    auto status_is() const -> bool
+    [[nodiscard]] auto status_is() const -> bool
     {
         return exclusive::test::status_is<Status>(task_);
     }
@@ -68,13 +76,13 @@ class AccessTask {
     }
 
     /// @brief Check if the task has exclusive access
-    auto has_access() const -> bool
+    [[nodiscard]] auto has_access() const -> bool
     {
         return exclusive::test::status_is<std::future_status::ready>(access_fut_);
     }
 
     /// @brief Block until the task acquires exclusive access
-    auto wait_until_access() const -> void { return access_fut_.wait(); }
+    auto wait_for_access() const -> void { return access_fut_.wait(); }
 };
 
 template <class Mutex, class Clock, class Duration>

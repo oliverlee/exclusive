@@ -28,7 +28,7 @@ TEST(ClhLockWallTime, WhileLockedTryLockForShortDuration)
     // launch a thread to acquire the lock
     const auto deadline = std::chrono::steady_clock::now() + 24h;
     auto task1 = test::AccessTask{mut, deadline};
-    task1.wait_until_access();
+    task1.wait_for_access();
 
     // verify that `try_lock_for` fails due to timeout
     const auto start = std::chrono::steady_clock::now();
@@ -53,7 +53,7 @@ TEST(ClhLockWallTime, TestWithTimeoutAbandonned)
 
     // launch a thread to acquire the lock
     auto task1 = test::AccessTask{mut};
-    task1.wait_until_access();
+    task1.wait_for_access();
 
     EXPECT_FALSE(mut.try_lock_for(WALL_TIME_WAIT_DURATION));
 
