@@ -168,7 +168,8 @@ class clh_mutex {
             // How strong does the memory order need to be?
             auto* t = tail_.load(std::memory_order_relaxed);
 
-            auto ok = tail_.compare_exchange_weak(
+            // Spurious failure is not okay here
+            auto ok = tail_.compare_exchange_strong(
                 t, new_tail, std::memory_order_relaxed, std::memory_order_relaxed);
             assert(ok);
 
