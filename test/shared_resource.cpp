@@ -3,17 +3,19 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <future>
 #include <system_error>
 #include <thread>
 
 namespace {
+using namespace std::chrono_literals;
 
 template <std::future_status Status, class T>
 auto status_is(const std::future<T>& fut) -> bool
 {
-    return Status == fut.wait_for(std::chrono::seconds{0});
+    return Status == fut.wait_for(0s);
 }
 
 }  // namespace
@@ -165,4 +167,32 @@ TEST(SharedResourceClhLock, ThrowsWhenSlotsExceeded)
     p1.set_value();
     p2.set_value();
     p3.set_value();
+}
+
+TEST(SharedResourceClhLock, ScopedAccessFailureOnTimeout)
+{
+    auto x = exclusive::shared_resource<int, exclusive::clh_mutex<2>>{};
+
+    auto end = std::promise<void>{};
+    auto on_access = std::promise<void>{};
+    auto has_access = on_access.get_future();
+
+    auto task = std::async(
+        std::launch::async,
+        [&x](auto on_access, auto stop_after) {
+            auto access_scope = x.access();
+
+            ASSERT_TRUE(access_scope);
+            on_access.set_value();
+
+            stop_after.get();
+        },
+        std::move(on_access),
+        end.get_future());
+
+    has_access.wait();
+
+    EXPECT_FALSE(x.access_within(0s));
+
+    end.set_value();
 }
