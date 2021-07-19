@@ -281,8 +281,8 @@ class clh_mutex {
             }
         }
 
-        // (X1) increase counter for observation in tests
-        // synchronizes with (X2)
+        // (X1) increase queued count
+        // synchronizes with (X4)
         queue_count_.fetch_add(1, std::memory_order_release);
 
         for (;;) {
@@ -292,6 +292,10 @@ class clh_mutex {
                 if (Clock::now() >= deadline) {
                     // propagate the predecessor to denote abandonment
                     n->pred = pred;
+
+                    // (X2) decrease queued count
+                    // synchronizes with (X4)
+                    queue_count_.fetch_sub(1, std::memory_order_release);
 
                     // (C4) release lock
                     // synchronizes with (C3)
@@ -323,17 +327,22 @@ class clh_mutex {
         // clear the predecessor, no timeout here
         active_->pred = nullptr;
 
+        // (X3) decrease queued count
+        // synchronizes with (X4)
+        queue_count_.fetch_sub(1, std::memory_order_release);
+
         // (C5) release lock
         // synchronizes with (C3)
         active_->locked.store(false, std::memory_order_release);
     }
 
-    // Number of times a thread has requested a lock and queued up
-    // NOTE: This only exists for testing fairness
+    // Current number of threads waiting on (also includes owning) the lock
+    // NOTE: May be inaccurate due to racing but can provide some barrier-like
+    //     functionality.
     [[nodiscard]] auto queue_count() const -> unsigned int
     {
-        // (X2) load queue count
-        // synchronizes with (X1)
+        // (X4) load queue count
+        // synchronizes with (X1), (X2), (X3)
         return queue_count_.load(std::memory_order_acquire);
     }
 
