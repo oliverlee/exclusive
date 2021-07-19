@@ -6,7 +6,6 @@
 #include <cassert>
 #include <chrono>
 #include <cstddef>
-#include <mutex>
 #include <new>
 #include <system_error>
 #include <type_traits>
