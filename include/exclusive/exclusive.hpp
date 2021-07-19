@@ -63,7 +63,7 @@ class scoped_access {
 /// @brief A shared resource with synchronized access
 /// @tparam T Resource type
 /// @tparam Mutex Mutex type (except `try_lock()` isn't necessary)
-template <class T, class Mutex = std::mutex>
+template <class T, class Mutex = std::timed_mutex>
 class shared_resource {
     static_assert(std::is_object_v<T>);
     static_assert(std::is_default_constructible_v<T>);
@@ -103,6 +103,14 @@ class shared_resource {
         -> scoped_access<T, Mutex>
     {
         return {resource_, mutex_, duration};
+    }
+
+    /// @brief Obtain the queue count on the shared resource
+    /// @return Number of threads waiting on the shared resource
+    template <class M = Mutex>
+    [[nodiscard]] auto queue_count() const -> decltype(std::declval<const M&>().queue_count())
+    {
+        return mutex_.queue_count();
     }
 };
 
