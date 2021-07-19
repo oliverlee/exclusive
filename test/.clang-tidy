@@ -10,3 +10,6 @@ Checks: >
     -readability-magic-numbers,
     -hicpp-avoid-goto,
 
+    #https://lists.llvm.org/pipermail/llvm-bugs/2018-July/066769.html,
+    -clang-analyzer-cplusplus.NewDeleteLeaks,
+

@@ -6,7 +6,6 @@
 #include <chrono>
 #include <future>
 #include <utility>
-#include <vector>
 
 namespace {
 using namespace std::literals::chrono_literals;
@@ -19,24 +18,28 @@ namespace test = exclusive::test;
 // ...
 // where Tn is a duration with respect to fake_clock::now()
 template <class Mutex, class... Durations>
-auto queue_n_with_timeouts(Mutex& mut, Durations... dur) -> std::vector<test::AccessTask<Mutex>>
+auto queue_n_with_timeouts(Mutex& mut, Durations... dur)
 {
-    auto tasks = std::vector<test::AccessTask<Mutex>>{};
-    tasks.reserve(1 + sizeof...(Durations));
+    auto count = 1U;
 
-    tasks.emplace_back(mut);
-    tasks.front().wait_for_access();
+    const auto spawn_first = [&mut] {
+        auto task = test::AccessTask{mut};
 
-    const auto spawn_next = [&mut, &tasks](auto d) {
-        tasks.emplace_back(mut, d);
-        while (!tasks.back().template status_is<std::future_status::timeout>()) {}
-        return 0;
+        task.wait_for_access();
+
+        return task;
     };
 
-    const auto unused = {spawn_next(dur)...};
-    (void)unused;
+    const auto spawn_next = [&mut, &count](auto d) {
+        auto task = test::AccessTask{mut, d};
 
-    return tasks;
+        ++count;
+        while (count != mut.queue_count()) {}
+
+        return task;
+    };
+
+    return std::array{spawn_first(), spawn_next(dur)...};
 }
 
 }  // namespace
