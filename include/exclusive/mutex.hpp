@@ -171,6 +171,7 @@ class clh_mutex {
             auto ok = tail_.compare_exchange_strong(
                 t, new_tail, std::memory_order_relaxed, std::memory_order_relaxed);
             assert(ok);
+            (void)ok;
 
             // (Q1) update old tail to point to the new tail
             // synchronizes with (Q3)
@@ -245,6 +246,7 @@ class clh_mutex {
     {
         static constexpr auto years = std::chrono::hours{24 * 365};
         assert(try_lock_for(10 * years));
+        (void)years;
     }
 
     auto try_lock() -> bool { return try_lock_for(std::chrono::seconds{0}); }
