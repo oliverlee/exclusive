@@ -98,6 +98,6 @@ int main()
                   << " s\n";
     }
 
-    std::cout << "🌈 done -- I counted to " << N * TASK_COUNT << "! ✨" << '\n';
+    std::cout << "🌈 done -- I counted to " << *resource.access() << "! ✨" << '\n';
     return 0;
 }

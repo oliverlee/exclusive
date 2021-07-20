@@ -12,7 +12,7 @@ build:clang-tidy --output_groups=report
 # Sanitizers don't work too well on Apple-Clang, use GCC instead
 
 # Address sanitizer
-# To use it: bazel build --config asan
+# To use it: bazel build --config=asan
 build:asan --strip=never
 build:asan --copt -fsanitize=address
 build:asan --copt -DADDRESS_SANITIZER
@@ -23,7 +23,7 @@ build:asan --linkopt -fsanitize=address
 build:asan --action_env=ASAN_OPTIONS=detect_leaks=1:color=always
 
 # Thread sanitizer
-# bazel build --config tsan
+# bazel build --config=tsan
 build:tsan --strip=never
 build:tsan --copt -g
 build:tsan --copt -fsanitize=thread
@@ -34,7 +34,8 @@ build:tsan --copt -O1
 build:tsan --copt -fno-omit-frame-pointer
 build:tsan --linkopt -fsanitize=thread
 
-# --config ubsan: Undefined Behavior Sanitizer
+# Undefined Behavior Sanitizer
+# bazel build --config=ubsan
 build:ubsan --strip=never
 build:ubsan --copt -fsanitize=undefined
 build:ubsan --copt -O1
